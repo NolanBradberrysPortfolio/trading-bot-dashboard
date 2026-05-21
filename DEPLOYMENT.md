@@ -67,6 +67,12 @@ That updates:
 trading-dashboard/public/data/dashboard-data.json
 ```
 
+To refresh and republish GitHub Pages in one command:
+
+```powershell
+.\trading-dashboard\refresh_and_publish.ps1
+```
+
 ## Automation Option
 
 The existing Codex automation can be extended to run this after the paper traders:

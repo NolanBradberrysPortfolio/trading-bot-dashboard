@@ -63,6 +63,7 @@ This folder is now self-contained for static hosting:
 
 - `public/` is the site output.
 - `publish_github_pages.ps1` publishes `public/` to the repo's `gh-pages` branch.
+- `refresh_and_publish.ps1` refreshes the dashboard JSON, commits it, pushes `main`, and republishes GitHub Pages.
 - `wrangler.toml` is ready for Cloudflare Pages.
 - `cloudflare-pages.workflow.example.yml` is a GitHub Actions template for Cloudflare once the repo has a token with workflow scope.
 - `public/robots.txt` discourages indexing, but it is not access control.
