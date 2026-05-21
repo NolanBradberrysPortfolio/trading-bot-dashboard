@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Trading Bot Monitor</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="Dashboard navigation">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true">TB</div>
+          <div>
+            <div class="brand-title">Trading Monitor</div>
+            <div class="brand-subtitle">Paper and live bot progress</div>
+          </div>
+        </div>
+        <nav class="nav-stack">
+          <button class="nav-button active" data-filter="all" type="button">All Systems</button>
+          <button class="nav-button" data-filter="Polymarket" type="button">Polymarket</button>
+          <button class="nav-button" data-filter="Stocks/Crypto" type="button">Stocks/Crypto</button>
+          <button class="nav-button" data-filter="active" type="button">Active</button>
+          <button class="nav-button" data-filter="risk" type="button">Needs Attention</button>
+        </nav>
+        <div class="source-card">
+          <div class="label">Data Refresh</div>
+          <div id="generatedAt" class="source-time">Loading</div>
+          <div id="visibilityBadge" class="visibility-badge">Public snapshot</div>
+        </div>
+      </aside>
+
+      <main class="content">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Portfolio Operations</p>
+            <h1>Bot Performance</h1>
+          </div>
+          <div class="topbar-actions">
+            <label class="search-box">
+              <span aria-hidden="true">&#8981;</span>
+              <input id="searchInput" type="search" placeholder="Filter strategies" />
+            </label>
+            <button id="refreshButton" class="icon-button" type="button" aria-label="Reload data" title="Reload data">&#8635;</button>
+          </div>
+        </header>
+
+        <section class="summary-grid" aria-label="Portfolio summary">
+          <article class="metric-card">
+            <span class="label">Total Equity</span>
+            <strong id="totalEquity">$0</strong>
+            <span id="totalReturn" class="metric-delta">0.0%</span>
+          </article>
+          <article class="metric-card">
+            <span class="label">Total PnL</span>
+            <strong id="totalPnl">$0</strong>
+            <span id="markType" class="metric-note">Conservative bid marks</span>
+          </article>
+          <article class="metric-card">
+            <span class="label">Open Positions</span>
+            <strong id="openPositions">0</strong>
+            <span id="closedPositions" class="metric-note">0 closed</span>
+          </article>
+          <article class="metric-card">
+            <span class="label">Strategies</span>
+            <strong id="strategyCount">0</strong>
+            <span id="activeStrategies" class="metric-note">0 active</span>
+          </article>
+        </section>
+
+        <section class="panel">
+          <div class="panel-header">
+            <div>
+              <h2>Equity by Platform</h2>
+              <p>Bid-marked equity where order-book marks are available.</p>
+            </div>
+          </div>
+          <div class="chart-row">
+            <div class="donut-wrap">
+              <svg id="allocationChart" viewBox="0 0 240 240" role="img" aria-label="Platform allocation chart"></svg>
+            </div>
+            <div id="platformBreakdown" class="breakdown-list"></div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-header">
+            <div>
+              <h2>Strategies</h2>
+              <p>Separate ledgers keep each rule accountable.</p>
+            </div>
+            <div class="segmented-control" role="group" aria-label="Sort strategies">
+              <button class="segment active" data-sort="pnl" type="button">PnL</button>
+              <button class="segment" data-sort="return" type="button">Return</button>
+              <button class="segment" data-sort="open" type="button">Open</button>
+            </div>
+          </div>
+          <div id="strategyGrid" class="strategy-grid"></div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-header">
+            <div>
+              <h2>Open Trades</h2>
+              <p>Public mode excludes token IDs, wallet addresses, API keys, and account credentials.</p>
+            </div>
+          </div>
+          <div id="positionsTable" class="positions-table"></div>
+        </section>
+
+        <section class="status-strip">
+          <div>
+            <strong>Security posture:</strong>
+            <span id="securityNote">No secrets are exported.</span>
+          </div>
+          <div>
+            <strong>Recommended sharing:</strong>
+            <span>Cloudflare Pages with Cloudflare Access. GitHub Pages only for public summaries.</span>
+          </div>
+        </section>
+      </main>
+    </div>
+    <script src="./app.js"></script>
+  </body>
+</html>
