@@ -14,6 +14,13 @@ try {
     }
 
     .\publish_github_pages.ps1
+
+    if ($env:CLOUDFLARE_API_TOKEN -and $env:CLOUDFLARE_ACCOUNT_ID) {
+        npx wrangler pages deploy public --project-name trading-bot-dashboard
+    }
+    else {
+        Write-Output "Skipping Cloudflare deploy: CLOUDFLARE_API_TOKEN and/or CLOUDFLARE_ACCOUNT_ID are not set."
+    }
 }
 finally {
     Pop-Location
