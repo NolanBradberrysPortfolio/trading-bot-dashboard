@@ -73,6 +73,18 @@ To refresh and republish GitHub Pages in one command:
 .\trading-dashboard\refresh_and_publish.ps1
 ```
 
+Scheduled daily runs should call:
+
+```powershell
+.\trading-dashboard\daily_dashboard_update.ps1
+```
+
+Logs are written under:
+
+```text
+trading-dashboard/logs/
+```
+
 ## Automation Option
 
 The existing Codex automation can be extended to run this after the paper traders:

@@ -9,4 +9,5 @@ raw-state/
 node_modules/
 __pycache__/
 *.pyc
+logs/
 .DS_Store
