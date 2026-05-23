@@ -306,13 +306,47 @@ def build_quant(public=True):
     marks = read_csv_rows(QUANT_MARKS)
 
     latest_mark = marks[-1] if marks else {}
-    total_equity = money(latest_mark.get("total_equity")) or money(account.get("starting_equity"))
-    cash = money(latest_mark.get("cash")) or money(account.get("cash"))
+    sleeve_states = account.get("sleeve_states", {})
+    total_equity = money(account.get("total_equity")) or money(latest_mark.get("total_equity")) or money(account.get("starting_equity"))
+    cash = money(account.get("cash")) or money(latest_mark.get("cash"))
     starting = money(account.get("starting_equity"))
     sleeves = []
     for sleeve in account.get("strategy_sleeves", []):
         strategy_id = sleeve.get("strategy")
         watch = next((item for item in watchlist if item.get("strategy") == strategy_id), {})
+        state = sleeve_states.get(strategy_id, {})
+        positions = state.get("positions", {})
+        initial = money(sleeve.get("target_notional"))
+        equity = money(state.get("equity")) or initial
+        sleeve_cash = money(state.get("cash")) if state else initial
+        positions_value = money(state.get("positions_value"))
+        position_rows = []
+        for symbol, position in positions.items():
+            quantity = money(position.get("quantity"))
+            price = money(position.get("last_price"))
+            market_value = money(position.get("market_value")) or quantity * price
+            if abs(quantity) <= 1e-10:
+                continue
+            weight = market_value / equity if equity else 0.0
+            position_rows.append(
+                {
+                    "question": symbol,
+                    "side": "Long",
+                    "type": "asset",
+                    "opened_at": account.get("last_run_at"),
+                    "end_date": state.get("last_signal_date"),
+                    "entry_price": price,
+                    "cost": market_value,
+                    "bid_pnl": None,
+                    "mid_pnl": None,
+                    "bid": price,
+                    "ask": price,
+                    "quantity": quantity,
+                    "market_value": market_value,
+                    "weight": weight,
+                    "status": "open",
+                }
+            )
         sleeves.append(
             {
                 "id": strategy_id,
@@ -320,27 +354,29 @@ def build_quant(public=True):
                 "platform": "Stocks/Crypto",
                 "bot_type": watch.get("family", "screened strategy").replace("_", " "),
                 "mode": account.get("account_type", "local_paper"),
-                "status": "waiting" if not account.get("positions") else "active",
+                "status": "active" if position_rows else "waiting",
                 "description": watch.get("description", ""),
-                "initial_capital": money(sleeve.get("target_notional")),
-                "cash": money(sleeve.get("target_notional")) if not account.get("positions") else 0.0,
-                "open_cost": 0.0,
-                "equity_bid": money(sleeve.get("target_notional")),
-                "equity_mid": money(sleeve.get("target_notional")),
+                "initial_capital": initial,
+                "cash": sleeve_cash,
+                "open_cost": positions_value,
+                "equity_bid": equity,
+                "equity_mid": equity,
                 "realized_pnl": 0.0,
-                "unrealized_bid_pnl": 0.0,
-                "unrealized_mid_pnl": 0.0,
-                "total_bid_pnl": 0.0,
-                "total_mid_pnl": 0.0,
-                "return_bid": 0.0,
-                "return_mid": 0.0,
-                "open_positions": 0,
+                "unrealized_bid_pnl": equity - initial,
+                "unrealized_mid_pnl": equity - initial,
+                "total_bid_pnl": equity - initial,
+                "total_mid_pnl": equity - initial,
+                "return_bid": (equity - initial) / initial if initial else 0.0,
+                "return_mid": (equity - initial) / initial if initial else 0.0,
+                "open_positions": len(position_rows),
                 "closed_positions": len([o for o in orders if o.get("strategy") == strategy_id]),
                 "last_candidates": None,
                 "last_opened": 0,
                 "last_closed": 0,
                 "backtest": metrics.get(strategy_id, {}),
-                "positions": [],
+                "last_signal_date": state.get("last_signal_date"),
+                "target_weights": state.get("target_weights", {}),
+                "positions": position_rows,
             }
         )
 

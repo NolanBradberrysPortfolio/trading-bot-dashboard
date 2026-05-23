@@ -3,6 +3,11 @@ $ErrorActionPreference = "Stop"
 $DashboardRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 Push-Location $DashboardRoot
 try {
+    $QuantRunner = Join-Path (Split-Path -Parent (Split-Path -Parent $DashboardRoot)) "there-s-an-openclaw-instance-called\quant_strategy_screen\forward_test\local_paper_runner.py"
+    if (Test-Path $QuantRunner) {
+        python $QuantRunner
+    }
+
     python .\export_dashboard_data.py
 
     git checkout main
