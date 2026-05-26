@@ -46,14 +46,7 @@ function allStrategies() {
 
 function filteredStrategies() {
   const query = state.query.trim().toLowerCase();
-  let rows = allStrategies();
-  if (state.filter === "active") {
-    rows = rows.filter((row) => row.status === "active");
-  } else if (state.filter === "risk") {
-    rows = rows.filter((row) => Number(row.total_bid_pnl || 0) < 0 || row.status === "waiting");
-  } else if (state.filter !== "all") {
-    rows = rows.filter((row) => row.platform === state.filter);
-  }
+  let rows = strategiesForFilter(state.filter);
   if (query) {
     rows = rows.filter((row) =>
       [row.name, row.platform, row.bot_type, row.description].join(" ").toLowerCase().includes(query),
@@ -67,33 +60,83 @@ function filteredStrategies() {
   return rows.sort(sorters[state.sort] || sorters.pnl);
 }
 
+function strategiesForFilter(filter) {
+  let rows = allStrategies();
+  if (filter === "active") {
+    rows = rows.filter((row) => row.status === "active");
+  } else if (filter === "risk") {
+    rows = rows.filter((row) => Number(row.total_bid_pnl || 0) < 0 || row.status === "waiting");
+  } else if (filter !== "all") {
+    rows = rows.filter((row) => row.platform === filter);
+  }
+  return rows;
+}
+
+function summarizeRows(rows) {
+  const initial = rows.reduce((sum, row) => sum + Number(row.initial_capital || 0), 0);
+  const equity = rows.reduce((sum, row) => sum + Number(row.equity_bid || 0), 0);
+  const pnl = equity - initial;
+  const open = rows.reduce((sum, row) => sum + Number(row.open_positions || 0), 0);
+  const closed = rows.reduce((sum, row) => sum + Number(row.closed_positions || 0), 0);
+  const active = rows.filter((row) => row.status === "active").length;
+  return {
+    initial,
+    equity,
+    pnl,
+    returnValue: initial ? pnl / initial : 0,
+    open,
+    closed,
+    active,
+    count: rows.length,
+  };
+}
+
+function filterLabel() {
+  const labels = {
+    all: "All Systems",
+    active: "Active Strategies",
+    risk: "Needs Attention",
+  };
+  return labels[state.filter] || state.filter;
+}
+
 function updateSummary() {
-  const summary = state.data.summary;
-  document.getElementById("totalEquity").textContent = money(summary.equity_bid);
-  document.getElementById("totalPnl").textContent = signedMoney(summary.total_bid_pnl);
-  document.getElementById("totalPnl").className = clsFor(summary.total_bid_pnl);
-  document.getElementById("totalReturn").textContent = pct(summary.return_bid);
-  document.getElementById("totalReturn").className = `metric-delta ${clsFor(summary.return_bid)}`;
-  document.getElementById("openPositions").textContent = summary.open_positions;
-  document.getElementById("closedPositions").textContent = `${summary.closed_positions} closed`;
-  document.getElementById("strategyCount").textContent = summary.strategy_count;
-  document.getElementById("activeStrategies").textContent = `${summary.active_strategies} active`;
+  const summary = summarizeRows(strategiesForFilter(state.filter));
+  document.getElementById("totalEquity").textContent = money(summary.equity);
+  document.getElementById("totalPnl").textContent = signedMoney(summary.pnl);
+  document.getElementById("totalPnl").className = clsFor(summary.pnl);
+  document.getElementById("totalReturn").textContent = pct(summary.returnValue);
+  document.getElementById("totalReturn").className = `metric-delta ${clsFor(summary.returnValue)}`;
+  document.getElementById("openPositions").textContent = summary.open;
+  document.getElementById("closedPositions").textContent = `${summary.closed} closed`;
+  document.getElementById("strategyCount").textContent = summary.count;
+  document.getElementById("activeStrategies").textContent = `${summary.active} active`;
+  document.getElementById("markType").textContent = `${filterLabel()} - conservative bid marks`;
   document.getElementById("generatedAt").textContent = new Date(state.data.generated_at).toLocaleString();
   document.getElementById("visibilityBadge").textContent = `${state.data.visibility} snapshot`;
   document.getElementById("securityNote").textContent = state.data.security_note;
 }
 
 function platformRows() {
-  return state.data.groups.map((group, index) => {
-    const equity = group.strategies.reduce((sum, strategy) => sum + Number(strategy.equity_bid || 0), 0);
-    const pnl = group.strategies.reduce((sum, strategy) => sum + Number(strategy.total_bid_pnl || 0), 0);
-    const open = group.strategies.reduce((sum, strategy) => sum + Number(strategy.open_positions || 0), 0);
+  const grouped = new Map();
+  strategiesForFilter(state.filter).forEach((strategy) => {
+    if (!grouped.has(strategy.platform)) {
+      grouped.set(strategy.platform, {
+        name: strategy.platform,
+        mode: strategy.mode || "mixed",
+        equity: 0,
+        pnl: 0,
+        open: 0,
+      });
+    }
+    const row = grouped.get(strategy.platform);
+    row.equity += Number(strategy.equity_bid || 0);
+    row.pnl += Number(strategy.total_bid_pnl || 0);
+    row.open += Number(strategy.open_positions || 0);
+  });
+  return Array.from(grouped.values()).map((row, index) => {
     return {
-      name: group.platform,
-      mode: group.mode || "mixed",
-      equity,
-      pnl,
-      open,
+      ...row,
       color: palette[index % palette.length],
     };
   });
@@ -147,6 +190,10 @@ function renderAllocationChart() {
   svg.appendChild(sub);
 
   const breakdown = document.getElementById("platformBreakdown");
+  if (!rows.length) {
+    breakdown.innerHTML = `<div class="empty-state">No platform allocation for this filter.</div>`;
+    return;
+  }
   breakdown.innerHTML = rows
     .map(
       (row) => `
@@ -283,6 +330,8 @@ document.querySelectorAll(".nav-button").forEach((button) => {
     document.querySelectorAll(".nav-button").forEach((item) => item.classList.remove("active"));
     button.classList.add("active");
     state.filter = button.dataset.filter;
+    updateSummary();
+    renderAllocationChart();
     renderStrategies();
     renderPositions();
   });

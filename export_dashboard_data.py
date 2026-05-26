@@ -313,6 +313,7 @@ def build_quant(public=True):
     sleeves = []
     for sleeve in account.get("strategy_sleeves", []):
         strategy_id = sleeve.get("strategy")
+        platform = "Crypto" if "BTC-USD" in strategy_id or "ETH-USD" in strategy_id else "Stocks"
         watch = next((item for item in watchlist if item.get("strategy") == strategy_id), {})
         state = sleeve_states.get(strategy_id, {})
         positions = state.get("positions", {})
@@ -351,7 +352,7 @@ def build_quant(public=True):
             {
                 "id": strategy_id,
                 "name": sleeve.get("archetype") or strategy_id,
-                "platform": "Stocks/Crypto",
+                "platform": platform,
                 "bot_type": watch.get("family", "screened strategy").replace("_", " "),
                 "mode": account.get("account_type", "local_paper"),
                 "status": "active" if position_rows else "waiting",
@@ -380,22 +381,34 @@ def build_quant(public=True):
             }
         )
 
-    return {
-        "platform": "Stocks/Crypto",
-        "mode": account.get("account_type", "local_paper"),
-        "status": account.get("status"),
-        "broker_connected": bool(account.get("broker_connected")),
-        "broker_note": account.get("broker_note"),
-        "updated_at": dt.datetime.fromtimestamp(QUANT_ACCOUNT.stat().st_mtime, dt.UTC).replace(microsecond=0).isoformat()
+    updated_at = (
+        dt.datetime.fromtimestamp(QUANT_ACCOUNT.stat().st_mtime, dt.UTC).replace(microsecond=0).isoformat()
         if QUANT_ACCOUNT.exists()
-        else None,
-        "starting_equity": starting,
-        "total_equity": total_equity,
-        "cash": cash,
-        "pnl": total_equity - starting if starting else 0.0,
-        "return": (total_equity - starting) / starting if starting else 0.0,
-        "strategies": sleeves,
-    }
+        else None
+    )
+    groups = []
+    for platform_name in ("Stocks", "Crypto"):
+        platform_strategies = [strategy for strategy in sleeves if strategy.get("platform") == platform_name]
+        group_starting = sum(money(strategy.get("initial_capital")) for strategy in platform_strategies)
+        group_equity = sum(money(strategy.get("equity_bid")) for strategy in platform_strategies)
+        group_cash = sum(money(strategy.get("cash")) for strategy in platform_strategies)
+        groups.append(
+            {
+                "platform": platform_name,
+                "mode": account.get("account_type", "local_paper"),
+                "status": "active" if any(strategy.get("status") == "active" for strategy in platform_strategies) else "waiting",
+                "broker_connected": bool(account.get("broker_connected")),
+                "broker_note": account.get("broker_note"),
+                "updated_at": updated_at,
+                "starting_equity": group_starting,
+                "total_equity": group_equity,
+                "cash": group_cash,
+                "pnl": group_equity - group_starting if group_starting else 0.0,
+                "return": (group_equity - group_starting) / group_starting if group_starting else 0.0,
+                "strategies": platform_strategies,
+            }
+        )
+    return groups
 
 
 def aggregate(groups):
@@ -426,7 +439,7 @@ def aggregate(groups):
 
 
 def build_payload(public=True):
-    groups = [build_polymarket(public=public), build_quant(public=public)]
+    groups = [build_polymarket(public=public), *build_quant(public=public)]
     return {
         "generated_at": utc_now(),
         "visibility": "public" if public else "private",
