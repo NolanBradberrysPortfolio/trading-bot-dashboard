@@ -3,6 +3,16 @@ $ErrorActionPreference = "Stop"
 $DashboardRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 Push-Location $DashboardRoot
 try {
+    $WorkspaceRoot = Split-Path -Parent $DashboardRoot
+    $PolymarketSingle = Join-Path $WorkspaceRoot "polymarket_paper_trader.py"
+    $PolymarketMulti = Join-Path $WorkspaceRoot "polymarket_multi_paper_trader.py"
+    if (Test-Path $PolymarketSingle) {
+        python $PolymarketSingle run
+    }
+    if (Test-Path $PolymarketMulti) {
+        python $PolymarketMulti run
+    }
+
     $QuantRunner = Join-Path (Split-Path -Parent (Split-Path -Parent $DashboardRoot)) "there-s-an-openclaw-instance-called\quant_strategy_screen\forward_test\local_paper_runner.py"
     if (Test-Path $QuantRunner) {
         python $QuantRunner
