@@ -47,6 +47,19 @@ def money(value):
         return 0.0
 
 
+def first_money(*values):
+    for value in values:
+        if value is not None:
+            return money(value)
+    return 0.0
+
+
+def write_json_atomic(path, payload):
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    tmp.replace(path)
+
+
 def classify_strategy(name, strategy_config):
     if name.startswith("edge_"):
         return "Validated Polymarket edge"
@@ -85,7 +98,7 @@ def safe_question(text, public):
     if not public:
         return text
     # Keep market text because it is needed for public auditability, but strip obvious wallet/account-like data.
-    return text.replace("0x", "wallet:")
+    return text.replace("0x", "[hex-redacted]:")
 
 
 def import_poly_helpers():
@@ -120,7 +133,18 @@ def mark_positions(positions):
         bids = trader.batch_prices(tokens, "BUY")
         asks = trader.batch_prices(tokens, "SELL")
     except Exception as exc:
-        return {}, f"mark fetch failed: {exc}"
+        marks = {}
+        for position in positions:
+            cost = money(position.get("entry_total_cost", position.get("stake", 0.0)))
+            marks[position.get("id")] = {
+                "bid_value": cost,
+                "mid_value": cost,
+                "bid_pnl": 0.0,
+                "mid_pnl": 0.0,
+                "missing_marks": 1,
+                "mark_warning": f"mark fetch failed; carrying at cost: {exc}",
+            }
+        return marks, f"mark fetch failed; carrying positions at cost: {exc}"
 
     marks = {}
     for position in positions:
@@ -130,6 +154,8 @@ def mark_positions(positions):
             bundles = money(position.get("bundles"))
             bid_value = 0.0
             mid_value = 0.0
+            bid_exit_fees = 0.0
+            mid_exit_fees = 0.0
             missing = 0
             for leg in position.get("legs", []):
                 token = str(leg.get("no_token_id", ""))
@@ -138,14 +164,24 @@ def mark_positions(positions):
                 if bid is None or ask is None:
                     missing += 1
                     continue
+                mid = (bid + ask) / 2
+                category = leg.get("category", "other")
+                venue = position.get("fee_model", "polymarket_global_taker")
                 bid_value += bundles * bid
-                mid_value += bundles * ((bid + ask) / 2)
+                mid_value += bundles * mid
+                bid_exit_fees += fee_for_trade(bid, bundles, category, venue)
+                mid_exit_fees += fee_for_trade(mid, bundles, category, venue)
+            bid_value -= bid_exit_fees
+            mid_value -= mid_exit_fees
             marks[position_id] = {
                 "bid_value": bid_value,
                 "mid_value": mid_value,
                 "bid_pnl": bid_value - cost,
                 "mid_pnl": mid_value - cost,
                 "missing_marks": missing,
+                "bid_exit_fee": bid_exit_fees,
+                "mid_exit_fee": mid_exit_fees,
+                "mark_warning": "partial bundle quote data" if missing else None,
             }
             continue
 
@@ -154,11 +190,12 @@ def mark_positions(positions):
         ask = asks.get(token)
         if bid is None or ask is None:
             marks[position_id] = {
-                "bid_value": 0.0,
-                "mid_value": 0.0,
-                "bid_pnl": -cost,
-                "mid_pnl": -cost,
+                "bid_value": cost,
+                "mid_value": cost,
+                "bid_pnl": 0.0,
+                "mid_pnl": 0.0,
                 "missing_marks": 1,
+                "mark_warning": "missing quote; carrying at cost",
             }
             continue
         shares = money(position.get("shares"))
@@ -178,6 +215,7 @@ def mark_positions(positions):
             "bid_pnl": bid_value - cost,
             "mid_pnl": mid_value - cost,
             "missing_marks": 0,
+            "mark_warning": None,
         }
     return marks, "live order-book marks"
 
@@ -186,6 +224,17 @@ def poly_positions_for_export(positions, marks, public):
     exported = []
     for position in positions:
         mark = marks.get(position.get("id"), {})
+        is_bundle = position.get("type") == "bundle"
+        bundles = money(position.get("bundles")) if is_bundle else 0.0
+        cost = money(position.get("entry_total_cost", position.get("stake", 0.0)))
+        entry_price = cost / bundles if is_bundle and bundles else money(position.get("entry_ask"))
+        bid = mark.get("bid")
+        ask = mark.get("ask")
+        quote_kind = "bid / ask"
+        if is_bundle:
+            bid = mark.get("bid_value") / bundles if bundles else None
+            ask = mark.get("mid_value") / bundles if bundles else None
+            quote_kind = "bundle bid / mid"
         exported.append(
             {
                 "id": position.get("id") if not public else None,
@@ -194,12 +243,15 @@ def poly_positions_for_export(positions, marks, public):
                 "type": position.get("type", "single"),
                 "opened_at": position.get("opened_at"),
                 "end_date": position.get("end_date"),
-                "entry_price": money(position.get("entry_ask")),
-                "cost": money(position.get("entry_total_cost", position.get("stake", 0.0))),
+                "entry_price": entry_price,
+                "cost": cost,
                 "bid_pnl": mark.get("bid_pnl"),
                 "mid_pnl": mark.get("mid_pnl"),
-                "bid": mark.get("bid"),
-                "ask": mark.get("ask"),
+                "bid": bid,
+                "ask": ask,
+                "quote_kind": quote_kind,
+                "mark_warning": mark.get("mark_warning"),
+                "missing_marks": mark.get("missing_marks", 0),
                 "status": position.get("status", "open"),
             }
         )
@@ -228,10 +280,12 @@ def build_polymarket(public=True):
         open_cost = sum(money(p.get("entry_total_cost", p.get("stake", 0.0))) for p in open_positions)
         bid_open_value = sum(marks.get(p.get("id"), {}).get("bid_value", 0.0) for p in open_positions)
         mid_open_value = sum(marks.get(p.get("id"), {}).get("mid_value", 0.0) for p in open_positions)
+        missing_mark_count = sum(int(marks.get(p.get("id"), {}).get("missing_marks", 0)) for p in open_positions)
         realized = sum(money(p.get("pnl")) for p in closed_positions)
         equity_bid = cash + bid_open_value
         equity_mid = cash + mid_open_value
         scan_row = latest_scan.get("strategies", {}).get(name, {})
+        exported_positions = poly_positions_for_export(open_positions, marks, public)
         strategies.append(
             {
                 "id": name,
@@ -241,6 +295,7 @@ def build_polymarket(public=True):
                 "mode": "paper",
                 "status": "active" if strategy_config.get("enabled", True) else "paused",
                 "description": describe_strategy(name, strategy_config),
+                "execution_model": "paper taker at displayed best ask; order-book depth is not simulated",
                 "initial_capital": initial,
                 "cash": cash,
                 "open_cost": open_cost,
@@ -260,7 +315,10 @@ def build_polymarket(public=True):
                 "last_closed": scan_row.get("closed", 0),
                 "fee_model": strategy_config.get("venue_fee_model", config.get("venue_fee_model")),
                 "mark_source": mark_source,
-                "positions": poly_positions_for_export(open_positions, marks, public)[:12],
+                "missing_mark_count": missing_mark_count,
+                "positions_exported": len(exported_positions),
+                "positions_truncated": False,
+                "positions": exported_positions,
             }
         )
 
@@ -298,12 +356,60 @@ def parse_screen_report_metrics():
     return metrics
 
 
+def quant_order_stats(orders):
+    cost_bps = 1.0
+    positions = {}
+    realized_by_strategy = {}
+    order_count_by_strategy = {}
+    exit_count_by_strategy = {}
+
+    for order in orders:
+        strategy = order.get("strategy")
+        symbol = order.get("symbol")
+        if not strategy or not symbol:
+            continue
+        side = str(order.get("side", "")).upper()
+        quantity = money(order.get("quantity"))
+        notional = money(order.get("notional"))
+        if quantity <= 0 or notional <= 0:
+            continue
+        order_count_by_strategy[strategy] = order_count_by_strategy.get(strategy, 0) + 1
+        key = (strategy, symbol)
+        current = positions.setdefault(key, {"quantity": 0.0, "cost_basis": 0.0})
+        fee = notional * cost_bps / 10000.0
+        if side == "BUY":
+            current["quantity"] += quantity
+            current["cost_basis"] += notional + fee
+        elif side == "SELL":
+            exit_count_by_strategy[strategy] = exit_count_by_strategy.get(strategy, 0) + 1
+            prior_qty = max(current["quantity"], 0.0)
+            basis_reduction = current["cost_basis"] * min(quantity / prior_qty, 1.0) if prior_qty else 0.0
+            proceeds = notional - fee
+            realized_by_strategy[strategy] = realized_by_strategy.get(strategy, 0.0) + proceeds - basis_reduction
+            current["quantity"] = max(0.0, current["quantity"] - quantity)
+            current["cost_basis"] = max(0.0, current["cost_basis"] - basis_reduction)
+
+    avg_entry = {}
+    for key, value in positions.items():
+        qty = value["quantity"]
+        avg_entry[key] = value["cost_basis"] / qty if qty else 0.0
+
+    return {
+        "positions": positions,
+        "avg_entry": avg_entry,
+        "realized_by_strategy": realized_by_strategy,
+        "order_count_by_strategy": order_count_by_strategy,
+        "exit_count_by_strategy": exit_count_by_strategy,
+    }
+
+
 def build_quant(public=True):
     account = read_json(QUANT_ACCOUNT, {})
     watchlist = read_json(QUANT_WATCHLIST, [])
     metrics = parse_screen_report_metrics()
     orders = read_csv_rows(QUANT_ORDERS)
     marks = read_csv_rows(QUANT_MARKS)
+    order_stats = quant_order_stats(orders)
 
     latest_mark = marks[-1] if marks else {}
     sleeve_states = account.get("sleeve_states", {})
@@ -318,9 +424,12 @@ def build_quant(public=True):
         state = sleeve_states.get(strategy_id, {})
         positions = state.get("positions", {})
         initial = money(sleeve.get("target_notional"))
-        equity = money(state.get("equity")) or initial
+        equity = money(state.get("equity")) if "equity" in state else initial
         sleeve_cash = money(state.get("cash")) if state else initial
         positions_value = money(state.get("positions_value"))
+        realized_pnl = order_stats["realized_by_strategy"].get(strategy_id, money(state.get("realized_pnl")))
+        order_count = order_stats["order_count_by_strategy"].get(strategy_id, 0)
+        exit_count = order_stats["exit_count_by_strategy"].get(strategy_id, 0)
         position_rows = []
         for symbol, position in positions.items():
             quantity = money(position.get("quantity"))
@@ -328,18 +437,31 @@ def build_quant(public=True):
             market_value = money(position.get("market_value")) or quantity * price
             if abs(quantity) <= 1e-10:
                 continue
+            order_position = order_stats["positions"].get((strategy_id, symbol), {})
+            cost_basis = order_position.get("cost_basis", 0.0)
+            if not cost_basis:
+                cost_basis = money(position.get("cost_basis"))
+            if not cost_basis:
+                cost_basis = market_value
+            avg_entry = order_stats["avg_entry"].get((strategy_id, symbol), 0.0)
+            if not avg_entry:
+                avg_entry = money(position.get("average_entry_price")) or price
             weight = market_value / equity if equity else 0.0
+            label = symbol
+            if platform == "Crypto" and symbol == "BIL":
+                label = "BIL (fallback cash/T-bill sleeve for crypto strategy)"
             position_rows.append(
                 {
-                    "question": symbol,
+                    "question": label,
                     "side": "Long",
                     "type": "asset",
                     "opened_at": account.get("last_run_at"),
-                    "end_date": state.get("last_signal_date"),
-                    "entry_price": price,
-                    "cost": market_value,
-                    "bid_pnl": None,
-                    "mid_pnl": None,
+                    "end_date": None,
+                    "last_signal_date": state.get("last_signal_date"),
+                    "entry_price": avg_entry,
+                    "cost": cost_basis,
+                    "bid_pnl": market_value - cost_basis,
+                    "mid_pnl": market_value - cost_basis,
                     "bid": price,
                     "ask": price,
                     "quantity": quantity,
@@ -359,23 +481,25 @@ def build_quant(public=True):
                 "description": watch.get("description", ""),
                 "initial_capital": initial,
                 "cash": sleeve_cash,
-                "open_cost": positions_value,
+                "open_cost": sum(money(row.get("cost")) for row in position_rows),
                 "equity_bid": equity,
                 "equity_mid": equity,
-                "realized_pnl": 0.0,
-                "unrealized_bid_pnl": equity - initial,
-                "unrealized_mid_pnl": equity - initial,
+                "realized_pnl": realized_pnl,
+                "unrealized_bid_pnl": sum(money(row.get("bid_pnl")) for row in position_rows),
+                "unrealized_mid_pnl": sum(money(row.get("mid_pnl")) for row in position_rows),
                 "total_bid_pnl": equity - initial,
                 "total_mid_pnl": equity - initial,
                 "return_bid": (equity - initial) / initial if initial else 0.0,
                 "return_mid": (equity - initial) / initial if initial else 0.0,
                 "open_positions": len(position_rows),
-                "closed_positions": len([o for o in orders if o.get("strategy") == strategy_id]),
+                "closed_positions": exit_count,
+                "orders_count": order_count,
                 "last_candidates": None,
                 "last_opened": 0,
-                "last_closed": 0,
+                "last_closed": exit_count,
                 "backtest": metrics.get(strategy_id, {}),
                 "last_signal_date": state.get("last_signal_date"),
+                "execution_model": account.get("execution_model", "daily close model paper fills; not broker-routed"),
                 "target_weights": state.get("target_weights", {}),
                 "positions": position_rows,
             }
@@ -398,7 +522,7 @@ def build_quant(public=True):
                 "mode": account.get("account_type", "local_paper"),
                 "status": "active" if any(strategy.get("status") == "active" for strategy in platform_strategies) else "waiting",
                 "broker_connected": bool(account.get("broker_connected")),
-                "broker_note": account.get("broker_note"),
+                "broker_note": account.get("broker_note") if not public else None,
                 "updated_at": updated_at,
                 "starting_equity": group_starting,
                 "total_equity": group_equity,
@@ -443,7 +567,7 @@ def build_payload(public=True):
     return {
         "generated_at": utc_now(),
         "visibility": "public" if public else "private",
-        "security_note": "No API keys, wallet addresses, broker credentials, token IDs, or trading controls are exported.",
+        "security_note": "No API keys, wallet addresses, broker credentials, token IDs, or trading controls are exported. Public data still includes market names, sides, prices, and paper position sizes.",
         "deployment_recommendation": "Cloudflare Pages plus Cloudflare Access for authenticated sharing; GitHub Pages only for public summaries.",
         "summary": aggregate(groups),
         "groups": groups,
@@ -458,7 +582,7 @@ def main():
     payload = build_payload(public=not args.private)
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    write_json_atomic(out, payload)
     print(json.dumps({"out": str(out), "generated_at": payload["generated_at"], "strategies": payload["summary"]["strategy_count"]}, indent=2))
 
 

@@ -1,6 +1,16 @@
 $ErrorActionPreference = "Stop"
 
 $DashboardRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$LockPath = Join-Path $DashboardRoot "logs\refresh.lock"
+New-Item -ItemType Directory -Force -Path (Split-Path -Parent $LockPath) | Out-Null
+$LockStream = $null
+try {
+    $LockStream = [System.IO.File]::Open($LockPath, [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
+}
+catch {
+    Write-Output "Another dashboard refresh is already running. Exiting without changes."
+    exit 0
+}
 Push-Location $DashboardRoot
 try {
     $WorkspaceRoot = Split-Path -Parent $DashboardRoot
@@ -39,4 +49,8 @@ try {
 }
 finally {
     Pop-Location
+    if ($LockStream) {
+        $LockStream.Close()
+        $LockStream.Dispose()
+    }
 }
