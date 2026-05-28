@@ -48,6 +48,7 @@ input {
   position: sticky;
   top: 0;
   height: 100vh;
+  overflow-y: auto;
 }
 
 .brand {
@@ -126,6 +127,7 @@ input {
   margin-top: 8px;
   font-weight: 750;
   line-height: 1.35;
+  white-space: pre-line;
 }
 
 .visibility-badge {
@@ -248,6 +250,18 @@ h2 {
 
 .negative {
   color: var(--red);
+}
+
+.neutral {
+  color: var(--muted);
+}
+
+.warning-text {
+  display: inline-block;
+  margin-top: 4px;
+  color: var(--gold);
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .panel {
@@ -518,7 +532,7 @@ td {
   }
 
   .nav-stack {
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .summary-grid,
@@ -559,5 +573,17 @@ td {
 
   h1 {
     font-size: 28px;
+  }
+
+  table {
+    min-width: 760px;
+  }
+
+  th:first-child,
+  td:first-child {
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    background: var(--surface);
   }
 }
